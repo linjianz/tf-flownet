@@ -1,4 +1,5 @@
 .idea
+.directory
 data
 log
 model
