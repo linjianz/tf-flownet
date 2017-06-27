@@ -25,9 +25,9 @@ batch_size = 64
 train_pairs_number = 20000
 val_pairs_number = 64
 iter_per_epoch = train_pairs_number // batch_size
+use_gpu_1 = True
 width = 512
 height = 384
-
 dir0 = '20170627_3'  # change it every time when training
 net_name = 'flownet_simple/'
 dir_models = 'model/' + net_name
@@ -145,7 +145,7 @@ class Data(object):
 
 ########################################
 class NetModel(object):
-    def __init__(self, constraints=False):
+    def __init__(self, use_gpu_1=True):
         self.x1 = tf.placeholder(tf.float32, [None, height, width, 3], name='x1')  # image1
         self.x2 = tf.placeholder(tf.float32, [None, height, width, 3], name='x2')  # image2
         self.x3 = tf.placeholder(tf.float32, [None, height, width, 2], name='x3')  # label
@@ -227,7 +227,8 @@ class NetModel(object):
         # gpu configuration
         self.tf_config = tf.ConfigProto()
         self.tf_config.gpu_options.allow_growth = True
-        # tf_config.gpu_options.visible_device_list = '1'
+        if use_gpu_1 == True:
+            self.tf_config.gpu_options.visible_device_list = '1'
 
     def mean_loss(self, gt, predict):
         loss = tf.reduce_mean(tf.abs(gt-predict))
@@ -243,7 +244,7 @@ def main(_):
     dataset_v = Data(list1_v, list2_v, list3_v, shuffle=True, minus_mean=False)
     x1_v, x2_v, x3_v = dataset_v.next_batch()
 
-    model = NetModel()
+    model = NetModel(use_gpu_1=use_gpu_1)
     with tf.Session(config=model.tf_config) as sess:
         sess.run(model.init)
         writer_train = tf.train.SummaryWriter(dir_log_train, sess.graph)
