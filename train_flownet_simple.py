@@ -19,17 +19,17 @@ from datetime import datetime
 lr_base = 1e-3
 epoch_max = 10
 epoch_lr_decay = 500
-epoch_save = 2
+epoch_save = 1
 max_to_keep = 5
 batch_size = 64
 train_pairs_number = 20000
+val_pairs_number = 64
 iter_per_epoch = train_pairs_number // batch_size
 width = 512
 height = 384
 
-dir0 = '20170624_1'  # change it every time when training
+dir0 = '20170627_3'  # change it every time when training
 net_name = 'flownet_simple/'
-
 dir_models = 'model/' + net_name
 dir_logs = 'log/' + net_name
 dir_model = dir_models + dir0
@@ -67,15 +67,15 @@ def removeFile(directory_list):
 
 
 def load_data():
-    img1_list_t = []  # [1, 2, 3, ..., 20000]
+    img1_list_t = []
     img2_list_t = []
     flow_list_t = []
-    img1_list_v = []  # [1, 2, 3, ..., 2000]
+    img1_list_v = []
     img2_list_v = []
     flow_list_v = []
     namelist = removeFile(os.listdir(dir_dataset))
     namelist.sort()
-    for i in range(train_pairs_number+2000):
+    for i in range(train_pairs_number+val_pairs_number):
         if i < train_pairs_number:
             flow_list_t.append(dir_dataset + namelist[3*i])
             img1_list_t.append(dir_dataset + namelist[3*i+1])
@@ -133,14 +133,14 @@ class Data(object):
         img2_batch = []
         flow_batch = []
         for i in range(start, end):
-            img1 = cv2.imread(self.list1[self.index_total[i]])
+            img1 = cv2.imread(self.list1[self.index_total[i]]).astype(np.float32)
             img1_batch.append(img1)
-            img2 = cv2.imread(self.list2[self.index_total[i]])
+            img2 = cv2.imread(self.list2[self.index_total[i]]).astype(np.float32)
             img2_batch.append(img2)
             flow = self.read_flow(self.list3[self.index_total[i]])
             flow_batch.append(flow)
 
-        return img1_batch, img2_batch, flow_batch
+        return np.array(img1_batch), np.array(img2_batch), np.array(flow_batch)
 
 
 ########################################
@@ -162,48 +162,57 @@ class NetModel(object):
             conv5_1 = slim.conv2d(conv5, 512, [3, 3], 1, scope='conv5_1')
             conv6 = slim.conv2d(conv5_1, 1024, [3, 3], 2, scope='conv6')
             conv6_1 = slim.conv2d(conv6, 1024, [3, 3], 1, scope='conv6_1')
-            predict6 = slim.conv2d(conv6_1, 2, [3, 3], 1, scope='pred6')
+            predict6 = slim.conv2d(conv6_1, 2, [3, 3], 1, activation_fn=None, scope='pred6')
 
         with tf.variable_scope('deconv'):
             # 12 * 16 flow
             deconv5 = slim.conv2d_transpose(conv6_1, 512, [4, 4], 2, scope='deconv5')
             deconvflow6 = slim.conv2d_transpose(predict6, 2, [4, 4], 2, 'SAME', scope='deconvflow6')
             concat5 = tf.concat(3, [conv5_1, deconv5, deconvflow6], name='concat5')
-            predict5 = slim.conv2d(concat5, 2, [3, 3], 1, 'SAME', scope='predict5')
+            predict5 = slim.conv2d(concat5, 2, [3, 3], 1, 'SAME', activation_fn=None, scope='predict5')
             # 24 * 32 flow
             deconv4 = slim.conv2d_transpose(concat5, 256, [4, 4], 2, 'SAME', scope='deconv4')
             deconvflow5 = slim.conv2d_transpose(predict5, 2, [4, 4], 2, 'SAME', scope='deconvflow5')
             concat4 = tf.concat(3, [conv4_1, deconv4, deconvflow5], name='concat4')
-            predict4 = slim.conv2d(concat4, 2, [3, 3], 1, 'SAME', scope='predict4')
+            predict4 = slim.conv2d(concat4, 2, [3, 3], 1, 'SAME', activation_fn=None, scope='predict4')
             # 48 * 64 flow
             deconv3 = slim.conv2d_transpose(concat4, 128, [4, 4], 2, 'SAME', scope='deconv3')
             deconvflow4 = slim.conv2d_transpose(predict4, 2, [4, 4], 2, 'SAME', scope='deconvflow4')
             concat3 = tf.concat(3, [conv3_1, deconv3, deconvflow4], name='concat3')
-            predict3 = slim.conv2d(concat3, 2, [3, 3], 1, 'SAME', scope='predict3')
+            predict3 = slim.conv2d(concat3, 2, [3, 3], 1, 'SAME', activation_fn=None, scope='predict3')
             # 96 * 128 flow
             deconv2 = slim.conv2d_transpose(concat3, 64, [4, 4], 2, 'SAME', scope='deconv2')
             deconvflow3 = slim.conv2d_transpose(predict3, 2, [4, 4], 2, 'SAME', scope='deconvflow3')
             concat2 = tf.concat(3, [conv2, deconv2, deconvflow3], name='concat2')
-            predict2 = slim.conv2d(concat2, 2, [3, 3], 1, 'SAME', scope='predict2')
+            predict2 = slim.conv2d(concat2, 2, [3, 3], 1, 'SAME', activation_fn=None, scope='predict2')
+            # 192 * 256 flow
+            deconv1 = slim.conv2d_transpose(concat2, 64, [4, 4], 2, 'SAME', scope='deconv1')
+            deconvflow2 = slim.conv2d_transpose(predict2, 2, [4, 4], 2, 'SAME', scope='deconvflow2')
+            concat1 = tf.concat(3, [conv1, deconv1, deconvflow2], name='concat1')
+            predict1 = slim.conv2d(concat1, 2, [3, 3], 1, 'SAME', activation_fn=None, scope='predict1')
 
         with tf.variable_scope('loss'):
+            weight = [1.0/2, 1.0/4, 1.0/8, 1.0/16, 1.0/32, 1.0/32]
             flow6 = tf.image.resize_images(self.x3, [6, 8])
-            loss6 = 0.32 * tf.reduce_mean(tf.abs(flow6 - predict6))
+            loss6 = weight[5] * self.mean_loss(flow6, predict6)
             flow5 = tf.image.resize_images(self.x3, [12, 16])
-            loss5 = 0.08 * tf.reduce_mean(tf.abs(flow5 - predict5))
+            loss5 = weight[4] * self.mean_loss(flow5, predict5)
             flow4 = tf.image.resize_images(self.x3, [24, 32])
-            loss4 = 0.02 * tf.reduce_mean(tf.abs(flow4 - predict4))
+            loss4 = weight[3] * self.mean_loss(flow4, predict4)
             flow3 = tf.image.resize_images(self.x3, [48, 64])
-            loss3 = 0.01 * tf.reduce_mean(tf.abs(flow3 - predict3))
+            loss3 = weight[2] * self.mean_loss(flow3, predict3)
             flow2 = tf.image.resize_images(self.x3, [96, 128])
-            loss2 = 0.005 * tf.reduce_mean(tf.abs(flow2 - predict2))
-            self.loss = tf.add_n([loss6, loss5, loss4, loss3, loss2])
+            loss2 = weight[1] * self.mean_loss(flow2, predict2)
+            flow1 = tf.image.resize_images(self.x3, [192, 256])
+            loss1 = weight[0] * self.mean_loss(flow1, predict1)
+            self.loss = tf.add_n([loss6, loss5, loss4, loss3, loss2, loss1])
             tf.summary.scalar('loss6', loss6)
             tf.summary.scalar('loss5', loss5)
             tf.summary.scalar('loss4', loss4)
             tf.summary.scalar('loss3', loss3)
             tf.summary.scalar('loss2', loss2)
-            tf.summary.scalar('total_loss', self.loss)
+            tf.summary.scalar('loss1', loss1)
+            tf.summary.scalar('loss', self.loss)
             self.merged = tf.merge_all_summaries()
 
         optimizer = tf.train.AdamOptimizer(self.x4)
@@ -219,6 +228,10 @@ class NetModel(object):
         self.tf_config = tf.ConfigProto()
         self.tf_config.gpu_options.allow_growth = True
         # tf_config.gpu_options.visible_device_list = '1'
+
+    def mean_loss(self, gt, predict):
+        loss = tf.reduce_mean(tf.abs(gt-predict))
+        return loss
 
 
 ########################################
