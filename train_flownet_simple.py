@@ -21,14 +21,15 @@ epoch_max = 10
 epoch_lr_decay = 500
 epoch_save = 1
 max_to_keep = 5
-batch_size = 64
+batch_size = 32
 train_pairs_number = 20000
-val_pairs_number = 64
+val_iters = 5
+val_pairs_number = batch_size * val_iters
 iter_per_epoch = train_pairs_number // batch_size
 use_gpu_1 = True
 width = 512
 height = 384
-dir0 = '20170627_3'  # change it every time when training
+dir0 = '20170627_6'  # change it every time when training
 net_name = 'flownet_simple/'
 dir_models = 'model/' + net_name
 dir_logs = 'log/' + net_name
@@ -242,7 +243,14 @@ def main(_):
     list1_t, list2_t, list3_t, list1_v, list2_v, list3_v = load_data()
     dataset_t = Data(list1_t, list2_t, list3_t, shuffle=True, minus_mean=False)
     dataset_v = Data(list1_v, list2_v, list3_v, shuffle=True, minus_mean=False)
-    x1_v, x2_v, x3_v = dataset_v.next_batch()
+    x1_v = []
+    x2_v = []
+    x3_v = []
+    for j in range(val_iters):
+        x1_b, x2_b, x3_b = dataset_v.next_batch()
+        x1_v.append(x1_b)
+        x2_v.append(x2_b)
+        x3_v.append(x3_b)
 
     model = NetModel(use_gpu_1=use_gpu_1)
     with tf.Session(config=model.tf_config) as sess:
@@ -268,13 +276,23 @@ def main(_):
                     writer_train.add_summary(merged_out_t, global_iter + 1)
                     print('%s, epoch %03d, iter %04d, lr %.5f, loss: %.5f' % (datetime.now(), epoch + 1, iter + 1, lr, loss_out_t))
                 if not (iter + 1) % 5:
+                    # loss_out = []
+                    # for i in range(val_iters):
+                    #     feed_dict_v = {}
+                    #     feed_dict_v[model.x1] = np.squeeze(x1_v[i])
+                    #     feed_dict_v[model.x2] = np.squeeze(x2_v[i])
+                    #     feed_dict_v[model.x3] = np.squeeze(x3_v[i])
+                    #     merged_out_v, loss_out_v = sess.run([model.merged, model.loss], feed_dict_v)
+                    #     loss_out.append(loss_out_v)
+                    # loss_mean = np.mean(np.array(loss_out), np.float32)
+
                     feed_dict_v = {}
-                    feed_dict_v[model.x1] = x1_v
-                    feed_dict_v[model.x2] = x2_v
-                    feed_dict_v[model.x3] = x3_v
+                    feed_dict_v[model.x1] = np.squeeze(x1_v[0])
+                    feed_dict_v[model.x2] = np.squeeze(x2_v[0])
+                    feed_dict_v[model.x3] = np.squeeze(x3_v[0])
                     merged_out_v, loss_out_v = sess.run([model.merged, model.loss], feed_dict_v)
-                    writer_val.add_summary(merged_out_v, global_iter + 1)
                     print('%s, epoch %03d, iter %04d, ****val loss****: %.5f' % (datetime.now(), epoch + 1, iter + 1, loss_out_v))
+                    writer_val.add_summary(merged_out_v, global_iter + 1)
 
                 # save
                 if not (global_iter + 1) % (epoch_save * iter_per_epoch):
