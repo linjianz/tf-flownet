@@ -16,7 +16,7 @@ from datetime import datetime
 
 ########################################
 # configuration
-lr_base = 1e-3
+lr_base = 1e-4
 epoch_max = 10
 epoch_lr_decay = 500
 epoch_save = 1
@@ -29,7 +29,9 @@ iter_per_epoch = train_pairs_number // batch_size
 use_gpu_1 = True
 width = 512
 height = 384
-dir0 = '20170627_6'  # change it every time when training
+
+dir0 = '20170629_1'  # change it every time when training
+dir_restore = 'model/flownet_simple/20170627_6/model-6250'
 net_name = 'flownet_simple/'
 dir_models = 'model/' + net_name
 dir_logs = 'log/' + net_name
@@ -254,7 +256,8 @@ def main(_):
 
     model = NetModel(use_gpu_1=use_gpu_1)
     with tf.Session(config=model.tf_config) as sess:
-        sess.run(model.init)
+        # sess.run(model.init)
+        model.saver.restore(sess, dir_restore)
         writer_train = tf.train.SummaryWriter(dir_log_train, sess.graph)
         writer_val = tf.train.SummaryWriter(dir_log_test, sess.graph)
         for epoch in xrange(epoch_max):
