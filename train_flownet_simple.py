@@ -14,6 +14,7 @@ import shutil
 import struct
 from datetime import datetime
 
+
 ########################################
 # configuration
 lr_base = 1e-4
@@ -63,7 +64,7 @@ os.mkdir(dir_log_test)
 
 ########################################
 # data process
-def removeFile(directory_list):
+def remove_file(directory_list):
     if '.directory' in directory_list:
         directory_list.remove('.directory')
     return directory_list
@@ -76,7 +77,7 @@ def load_data():
     img1_list_v = []
     img2_list_v = []
     flow_list_v = []
-    namelist = removeFile(os.listdir(dir_dataset))
+    namelist = remove_file(os.listdir(dir_dataset))
     namelist.sort()
     for i in range(train_pairs_number+val_pairs_number):
         if i < train_pairs_number:
