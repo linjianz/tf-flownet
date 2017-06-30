@@ -5,4 +5,9 @@ This is an implementation of the paper [2015_FlowNet: Learning Optical Flow with
 ## Program list
 ### train_flownet_simple.py
 ### test_flownet_simple.py
+### test_visual.m
+visualize the predicted flow
+### tools for flow visualization
+flow-code-cpp  
+flow-code-matlab  
 ## Result
