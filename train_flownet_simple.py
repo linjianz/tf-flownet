@@ -12,34 +12,32 @@ import cv2
 import numpy as np
 import shutil
 import struct
-from datetime import datetime
+import time
 
 
-########################################
-# configuration
-lr_base = 1e-4
-epoch_max = 10
-epoch_lr_decay = 500
-epoch_save = 1
-max_to_keep = 5
-batch_size = 32
-train_pairs_number = 20000
-val_iters = 5
-val_pairs_number = batch_size * val_iters
-iter_per_epoch = train_pairs_number // batch_size
-use_gpu_1 = True
-width = 512
-height = 384
-
-dir0 = '20170629_1'  # change it every time when training
-dir_restore = 'model/flownet_simple/20170627_6/model-6250'
+dir0 = '20170805_1'
 net_name = 'flownet_simple/'
+dir_restore = 'model/flownet_simple/20170627_6/model-6250'
+dir_data = '/media/csc105/Data/dataset/FlyingChairs/data/'
+
+lr_base = 1e-3              # initial learning rate
+epoch_lr_decay = 500        # every # epoch, lr will decay 0.1
+epoch_max = 5               # max epoch
+max_to_keep = 5             # number of model to save
+batch_size = 32             # bs
+train_pairs_number = 20000  # number of train samples
+val_iter = 2                # validation batch
+use_gpu_1 = False
+W, H = 512, 384
+val_pairs_number = batch_size * val_iter
+iter_per_epoch = train_pairs_number // batch_size
+epoch_save = epoch_max // max_to_keep
+########################################
 dir_models = 'model/' + net_name
 dir_logs = 'log/' + net_name
 dir_model = dir_models + dir0
 dir_log_train = dir_logs + dir0 + '_train'
 dir_log_test = dir_logs + dir0 + '_test'
-dir_dataset = '/media/csc105/Data/dataset/FlyingChairs/data/'
 if not os.path.exists(dir_models):
     os.mkdir(dir_models)
 if not os.path.exists(dir_logs):
@@ -54,16 +52,9 @@ if os.path.exists(dir_log_test):
 os.mkdir(dir_model)
 os.mkdir(dir_log_train)
 os.mkdir(dir_log_test)
-
 ########################################
-# load image mean
-# dir_mean = 'data/mean.mat'
-# mean_load = sio.loadmat(dir_mean)
-# mean = mean_load['mean']
 
 
-########################################
-# data process
 def remove_file(directory_list):
     if '.directory' in directory_list:
         directory_list.remove('.directory')
@@ -77,17 +68,17 @@ def load_data():
     img1_list_v = []
     img2_list_v = []
     flow_list_v = []
-    namelist = remove_file(os.listdir(dir_dataset))
+    namelist = remove_file(os.listdir(dir_data))
     namelist.sort()
     for i in range(train_pairs_number+val_pairs_number):
         if i < train_pairs_number:
-            flow_list_t.append(dir_dataset + namelist[3*i])
-            img1_list_t.append(dir_dataset + namelist[3*i+1])
-            img2_list_t.append(dir_dataset + namelist[3*i+2])
+            flow_list_t.append(dir_data + namelist[3*i])
+            img1_list_t.append(dir_data + namelist[3*i+1])
+            img2_list_t.append(dir_data + namelist[3*i+2])
         else:
-            flow_list_v.append(dir_dataset + namelist[3*i])
-            img1_list_v.append(dir_dataset + namelist[3*i+1])
-            img2_list_v.append(dir_dataset + namelist[3*i+2])
+            flow_list_v.append(dir_data + namelist[3*i])
+            img1_list_v.append(dir_data + namelist[3*i+1])
+            img2_list_v.append(dir_data + namelist[3*i+2])
 
     assert len(img1_list_t) == len(img2_list_t)
     assert len(img1_list_t) == len(flow_list_t)
@@ -147,13 +138,12 @@ class Data(object):
         return np.array(img1_batch), np.array(img2_batch), np.array(flow_batch)
 
 
-########################################
-class NetModel(object):
+class Net(object):
     def __init__(self, use_gpu_1=True):
-        self.x1 = tf.placeholder(tf.float32, [None, height, width, 3], name='x1')  # image1
-        self.x2 = tf.placeholder(tf.float32, [None, height, width, 3], name='x2')  # image2
-        self.x3 = tf.placeholder(tf.float32, [None, height, width, 2], name='x3')  # label
-        self.x4 = tf.placeholder(tf.float32, [], name='x4')  # lr
+        self.x1 = tf.placeholder(tf.float32, [None, H, W, 3], name='x1')  # image1
+        self.x2 = tf.placeholder(tf.float32, [None, H, W, 3], name='x2')  # image2
+        self.x3 = tf.placeholder(tf.float32, [None, H, W, 2], name='x3')  # label
+        self.lr = tf.placeholder(tf.float32, [], name='lr')  # lr
         with tf.variable_scope('conv'):
             concat1 = tf.concat(3, [self.x1, self.x2])
             conv1 = slim.conv2d(concat1, 64, [7, 7], 2, scope='conv1')
@@ -195,6 +185,9 @@ class NetModel(object):
             concat1 = tf.concat(3, [conv1, deconv1, deconvflow2], name='concat1')
             predict1 = slim.conv2d(concat1, 2, [3, 3], 1, 'SAME', activation_fn=None, scope='predict1')
 
+        self.tvars = tf.trainable_variables()  # turn on if you want to check the variables
+        # self.variables_names = [v.name for v in self.tvars]
+
         with tf.variable_scope('loss'):
             weight = [1.0/2, 1.0/4, 1.0/8, 1.0/16, 1.0/32, 1.0/32]
             flow6 = tf.image.resize_images(self.x3, [6, 8])
@@ -218,29 +211,22 @@ class NetModel(object):
             tf.summary.scalar('loss1', loss1)
             tf.summary.scalar('loss', self.loss)
             self.merged = tf.merge_all_summaries()
-
-        optimizer = tf.train.AdamOptimizer(self.x4)
+        optimizer = tf.train.AdamOptimizer(self.lr)
         self.train_op = slim.learning.create_train_op(self.loss, optimizer)
-
-        # init & save configuration
-        self.saver = tf.train.Saver(max_to_keep=max_to_keep)
-        self.tvars = tf.trainable_variables()  # turn on if you want to check the variables
-        self.variables_names = [v.name for v in self.tvars]
-        self.init = tf.initialize_all_variables()
 
         # gpu configuration
         self.tf_config = tf.ConfigProto()
         self.tf_config.gpu_options.allow_growth = True
-        if use_gpu_1 == True:
+        if use_gpu_1:
             self.tf_config.gpu_options.visible_device_list = '1'
+
+        self.init_all = tf.initialize_all_variables()
 
     def mean_loss(self, gt, predict):
         loss = tf.reduce_mean(tf.abs(gt-predict))
         return loss
 
 
-########################################
-# main function
 def main(_):
     # data preparation
     list1_t, list2_t, list3_t, list1_v, list2_v, list3_v = load_data()
@@ -249,58 +235,43 @@ def main(_):
     x1_v = []
     x2_v = []
     x3_v = []
-    for j in range(val_iters):
+    for j in range(val_iter):
         x1_b, x2_b, x3_b = dataset_v.next_batch()
         x1_v.append(x1_b)
         x2_v.append(x2_b)
         x3_v.append(x3_b)
 
-    model = NetModel(use_gpu_1=use_gpu_1)
+    model = Net(use_gpu_1=use_gpu_1)
+    saver = tf.train.Saver(max_to_keep=max_to_keep)
     with tf.Session(config=model.tf_config) as sess:
-        # sess.run(model.init)
-        model.saver.restore(sess, dir_restore)
+        sess.run(model.init_all)
+        # saver.restore(sess, dir_restore)
         writer_train = tf.train.SummaryWriter(dir_log_train, sess.graph)
         writer_val = tf.train.SummaryWriter(dir_log_test, sess.graph)
         for epoch in xrange(epoch_max):
             lr_decay = 0.1 ** (epoch / epoch_lr_decay)
             lr = lr_base * lr_decay
-            for iter in xrange(iter_per_epoch):
-                global_iter = epoch * iter_per_epoch + iter
+            for iteration in xrange(iter_per_epoch):
+                time_start = time.time()
+                global_iter = epoch * iter_per_epoch + iteration
                 x1_t, x2_t, x3_t = dataset_t.next_batch()
-                feed_dict = {}
-                feed_dict[model.x1] = x1_t
-                feed_dict[model.x2] = x2_t
-                feed_dict[model.x3] = x3_t
-                feed_dict[model.x4] = lr
-                sess.run(model.train_op, feed_dict)
+                feed_dict = {model.x1: x1_t, model.x2: x2_t, model.x3: x3_t, model.lr: lr}
+                _, merged_out_t, loss_out_t = sess.run([model.train_op, model.merged, model.loss], feed_dict)
 
-                # display
-                if not (iter + 1) % 1:
-                    merged_out_t, loss_out_t = sess.run([model.merged, model.loss], feed_dict)
-                    writer_train.add_summary(merged_out_t, global_iter + 1)
-                    print('%s, epoch %03d, iter %04d, lr %.5f, loss: %.5f' % (datetime.now(), epoch + 1, iter + 1, lr, loss_out_t))
-                if not (iter + 1) % 5:
-                    # loss_out = []
-                    # for i in range(val_iters):
-                    #     feed_dict_v = {}
-                    #     feed_dict_v[model.x1] = np.squeeze(x1_v[i])
-                    #     feed_dict_v[model.x2] = np.squeeze(x2_v[i])
-                    #     feed_dict_v[model.x3] = np.squeeze(x3_v[i])
-                    #     merged_out_v, loss_out_v = sess.run([model.merged, model.loss], feed_dict_v)
-                    #     loss_out.append(loss_out_v)
-                    # loss_mean = np.mean(np.array(loss_out), np.float32)
+                writer_train.add_summary(merged_out_t, global_iter + 1)
+                hour_per_epoch = iter_per_epoch * ((time.time() - time_start) / 3600)
+                print('%.2f h/epoch, epoch %03d/%03d, iter %04d/%04d, lr %.5f, loss: %.5f' %
+                      (hour_per_epoch, epoch + 1, epoch_max, iteration + 1, iter_per_epoch, lr, loss_out_t))
 
-                    feed_dict_v = {}
-                    feed_dict_v[model.x1] = np.squeeze(x1_v[0])
-                    feed_dict_v[model.x2] = np.squeeze(x2_v[0])
-                    feed_dict_v[model.x3] = np.squeeze(x3_v[0])
+                if not (iteration + 1) % 5:
+                    feed_dict_v = {model.x1: x1_v[0], model.x2: x2_v[0], model.x3: x3_v[0]}
                     merged_out_v, loss_out_v = sess.run([model.merged, model.loss], feed_dict_v)
-                    print('%s, epoch %03d, iter %04d, ****val loss****: %.5f' % (datetime.now(), epoch + 1, iter + 1, loss_out_v))
+                    print('****val loss****: %.5f' % loss_out_v)
                     writer_val.add_summary(merged_out_v, global_iter + 1)
 
-                # save
-                if not (global_iter + 1) % (epoch_save * iter_per_epoch):
-                    model.saver.save(sess, (dir_model + '/model'), global_step=global_iter+1)
+            # save
+            if not (epoch + 1) % epoch_save:
+                saver.save(sess, (dir_model + '/model'), global_step=epoch+1)
 
 
 if __name__ == "__main__":
